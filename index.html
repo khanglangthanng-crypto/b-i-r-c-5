@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Retrolens - Hologram Hand Scan (Web)</title>
+<style>
+  :root {
+    --bg: #0b0b12;
+    --panel: #15151f;
+    --accent: #00e5ff;
+    --accent2: #ffe600;
+    --text: #e8e8f0;
+    --muted: #8a8aa0;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", Roboto, Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px;
+    gap: 16px;
+  }
+  h1 {
+    margin: 0;
+    font-size: 22px;
+    letter-spacing: 1px;
+    color: var(--accent);
+    text-shadow: 0 0 12px rgba(0, 229, 255, 0.5);
+  }
+  .subtitle { color: var(--muted); font-size: 13px; margin-top: -10px; text-align: center; }
+
+  .stage {
+    position: relative;
+    width: 100%;
+    max-width: 960px;
+    aspect-ratio: 4 / 3;
+    background: #000;
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid #262636;
+    box-shadow: 0 0 40px rgba(0, 229, 255, 0.08);
+  }
+  video { display: none; }
+  canvas#outputCanvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: cover;
+  }
+  .overlay-msg {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 12px;
+    background: rgba(0,0,0,0.55);
+    text-align: center;
+    padding: 20px;
+  }
+  .hidden { display: none !important; }
+
+  button {
+    background: linear-gradient(135deg, var(--accent), #007a8a);
+    border: none;
+    color: #001318;
+    font-weight: 700;
+    padding: 10px 22px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    letter-spacing: 0.5px;
+  }
+  button:hover { filter: brightness(1.1); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .panel {
+    width: 100%;
+    max-width: 960px;
+    background: var(--panel);
+    border: 1px solid #262636;
+    border-radius: 12px;
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .panel h3 { margin: 0 0 4px 0; font-size: 14px; color: var(--accent2); }
+  .instructions {
+    font-size: 12.5px;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+  .instructions b { color: var(--text); }
+  .status {
+    font-size: 12.5px;
+    color: var(--accent);
+  }
+
+  .record-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  #previewVideo { max-width: 100%; border-radius: 8px; margin-top: 8px; }
+
+  /* --- Nút nổi quay video, chỉ hiện trên màn hình điện thoại --- */
+  .mobile-record-btn {
+    display: none;
+    position: fixed;
+    bottom: 22px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 50;
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: #ff3b3b;
+    color: #fff;
+    font-size: 24px;
+    border: 3px solid #fff;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.5);
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+  }
+  .mobile-record-btn.recording { background: #ffffff; color: #ff3b3b; }
+  .mobile-record-btn:active { transform: translateX(-50%) scale(0.94); }
+
+  /* --- Chế độ điện thoại: ẩn tiêu đề/panel, camera phủ toàn màn hình --- */
+  @media (max-width: 700px) {
+    html, body { height: 100%; }
+    body { padding: 0; gap: 0; }
+    h1, .subtitle, .panel { display: none; }
+    .stage {
+      max-width: none;
+      width: 100vw;
+      height: 100vh;
+      aspect-ratio: unset;
+      border-radius: 0;
+      border: none;
+      box-shadow: none;
+    }
+    .mobile-record-btn { display: flex; }
+  }
+</style>
+</head>
+<body>
+
+  <h1>RETROLENS &mdash; Hologram Hand Scan (Web)</h1>
+  <div class="subtitle">Chạy hoàn toàn trong trình duyệt bằng MediaPipe Tasks Vision (WASM) + Canvas API</div>
+
+  <div class="stage">
+    <video id="webcam" playsinline></video>
+    <canvas id="outputCanvas" width="960" height="720"></canvas>
+    <div id="overlay" class="overlay-msg">
+      <div id="overlayText">Nhấn nút bên dưới để bắt đầu camera</div>
+      <button id="startBtn">Bắt đầu Camera</button>
+    </div>
+  </div>
+
+  <button id="mobileRecordBtn" class="mobile-record-btn" type="button" title="Quay video">⏺</button>
+
+  <div class="panel">
+    <div class="instructions">
+      <b>Cách dùng:</b> đưa 1 hoặc 2 bàn tay xòe rộng vào khung hình — lưới ánh sáng sẽ tự động nối
+      tất cả đầu ngón tay lại với nhau, kèm hiệu ứng phát sáng và các cụm số giả kiểu dữ liệu quét.
+      Không cần chọn filter hay cử chỉ gì thêm.
+    </div>
+
+    <div>
+      <h3>Quay &amp; Chia sẻ video (tùy chọn — bạn tự quyết định)</h3>
+      <p class="instructions" style="margin:0 0 8px 0;">
+        Không có gì tự động ghi hình hay gửi đi. Bạn tự bấm "Bắt đầu quay",
+        rồi tự chọn tải video về máy hoặc chia sẻ/gửi đi qua ứng dụng bạn chọn.
+      </p>
+      <div class="record-actions">
+        <button id="recordBtn" disabled>⏺ Bắt đầu quay</button>
+        <span class="status" id="recordStatus"></span>
+      </div>
+      <div id="recordResult" class="hidden">
+        <video id="previewVideo" controls></video>
+        <div class="record-actions" style="margin-top:8px;">
+          <button id="downloadBtn">⬇️ Tải video về máy</button>
+          <button id="shareBtn">📤 Chia sẻ / Gửi email</button>
+        </div>
+        <p class="instructions" id="shareNote"></p>
+      </div>
+    </div>
+
+    <div class="instructions">
+      <b>Yêu cầu:</b> mở trang này qua <code>http://localhost</code> hoặc HTTPS để trình duyệt cho phép truy cập camera.
+    </div>
+    <div class="status" id="statusText">Đang chờ tải mô hình MediaPipe...</div>
+  </div>
+
+<script type="module">
+import {
+  HandLandmarker,
+  FilesetResolver,
+} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+
+const MP_VERSION = "0.10.14";
+const HAND_MODEL_URL =
+  "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task";
+
+const FINGERTIP_IDS = [4, 8, 12, 16, 20]; // cái, trỏ, giữa, áp út, út
+
+const video = document.getElementById("webcam");
+const canvas = document.getElementById("outputCanvas");
+const ctx = canvas.getContext("2d", { willReadFrequently: true });
+const overlay = document.getElementById("overlay");
+const overlayText = document.getElementById("overlayText");
+const startBtn = document.getElementById("startBtn");
+const statusText = document.getElementById("statusText");
+const mobileRecordBtn = document.getElementById("mobileRecordBtn");
+const recordBtn = document.getElementById("recordBtn");
+const recordStatus = document.getElementById("recordStatus");
+const recordResult = document.getElementById("recordResult");
+const previewVideo = document.getElementById("previewVideo");
+const downloadBtn = document.getElementById("downloadBtn");
+const shareBtn = document.getElementById("shareBtn");
+const shareNote = document.getElementById("shareNote");
+
+// ---------------------------------------------------------------------------
+// 1. Khởi tạo HandLandmarker (MediaPipe Tasks Vision)
+// ---------------------------------------------------------------------------
+let handLandmarker = null;
+
+async function initHandLandmarker() {
+  const vision = await FilesetResolver.forVisionTasks(
+    `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/wasm`
+  );
+  handLandmarker = await HandLandmarker.createFromOptions(vision, {
+    baseOptions: { modelAssetPath: HAND_MODEL_URL, delegate: "GPU" },
+    runningMode: "VIDEO",
+    numHands: 2,
+    minHandDetectionConfidence: 0.6,
+    minHandPresenceConfidence: 0.6,
+    minTrackingConfidence: 0.6,
+  });
+  statusText.textContent = "Mô hình đã sẵn sàng. Nhấn 'Bắt đầu Camera' để chạy.";
+  startBtn.disabled = false;
+}
+
+startBtn.disabled = true;
+initHandLandmarker().catch((err) => {
+  console.error(err);
+  statusText.textContent =
+    "Lỗi khi tải mô hình MediaPipe. Kiểm tra kết nối Internet rồi tải lại trang.";
+});
+
+// ---------------------------------------------------------------------------
+// 2. Bắt đầu Camera
+// ---------------------------------------------------------------------------
+startBtn.addEventListener("click", async () => {
+  try {
+    overlayText.textContent = "Đang mở camera...";
+    const screenW = window.innerWidth || 960;
+    const screenH = window.innerHeight || 720;
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "user", width: { ideal: screenW }, height: { ideal: screenH } },
+      audio: false,
+    });
+    video.srcObject = stream;
+    await video.play();
+    canvas.width = video.videoWidth || screenW;
+    canvas.height = video.videoHeight || screenH;
+    overlay.classList.add("hidden");
+    recordBtn.disabled = false;
+    requestAnimationFrame(renderLoop);
+  } catch (err) {
+    console.error(err);
+    overlayText.textContent =
+      "Không thể truy cập camera. Hãy cho phép quyền camera, và đảm bảo trang đang mở qua http://localhost hoặc HTTPS.";
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 3. Vẽ lưới hologram nối TẤT CẢ đầu ngón tay (đồ thị đầy đủ)
+// ---------------------------------------------------------------------------
+function fakeNormalizedCoord() {
+  return "." + String(Math.floor(Math.random() * 999999)).padStart(6, "0");
+}
+
+function drawHologramMesh(points) {
+  const n = points.length;
+  if (n === 0) return;
+
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = "rgba(210,235,255,0.85)";
+  ctx.shadowColor = "rgba(150,210,255,0.9)";
+  ctx.shadowBlur = 10;
+
+  // Đồ thị đầy đủ: nối MỌI cặp điểm với nhau
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      ctx.beginPath();
+      ctx.moveTo(points[i][0], points[i][1]);
+      ctx.lineTo(points[j][0], points[j][1]);
+      ctx.stroke();
+    }
+  }
+
+  // Vòng tròn "khóa mục tiêu" tại từng đầu ngón tay
+  ctx.shadowBlur = 6;
+  points.forEach(([px, py]) => {
+    ctx.beginPath();
+    ctx.arc(px, py, 8, 0, Math.PI * 2);
+    ctx.stroke();
+  });
+
+  // Rắc thêm hạt sáng nhỏ ngẫu nhiên quanh vùng bàn tay
+  const xs = points.map((p) => p[0]), ys = points.map((p) => p[1]);
+  const minX = Math.min(...xs) - 30, maxX = Math.max(...xs) + 30;
+  const minY = Math.min(...ys) - 30, maxY = Math.max(...ys) + 30;
+  ctx.fillStyle = "rgba(255,255,255,0.8)";
+  for (let k = 0; k < 20; k++) {
+    const rx = minX + Math.random() * (maxX - minX);
+    const ry = minY + Math.random() * (maxY - minY);
+    ctx.beginPath();
+    ctx.arc(rx, ry, Math.random() * 1.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
+
+  // --- Cụm số thập phân giả xếp chồng cạnh từng điểm ---
+  ctx.fillStyle = "rgba(210,235,255,0.85)";
+  ctx.font = "8px monospace";
+  points.forEach(([px, py]) => {
+    const lineCount = 2 + Math.floor(Math.random() * 2);
+    for (let i = 0; i < lineCount; i++) {
+      ctx.fillText(fakeNormalizedCoord(), px + 8, py - 10 + i * 9);
+    }
+  });
+
+  // Vài cụm số rải dọc theo cạnh để lấp mật độ
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    const t = Math.random();
+    const x = points[i][0] * t + points[j][0] * (1 - t);
+    const y = points[i][1] * t + points[j][1] * (1 - t);
+    ctx.fillText(fakeNormalizedCoord(), x + 4, y - 4);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 4. Vòng lặp render chính
+// ---------------------------------------------------------------------------
+function renderLoop() {
+  if (video.readyState < 2) {
+    requestAnimationFrame(renderLoop);
+    return;
+  }
+
+  const w = canvas.width, h = canvas.height;
+
+  ctx.save();
+  ctx.scale(-1, 1);
+  ctx.drawImage(video, -w, 0, w, h);
+  ctx.restore();
+
+  const nowMs = performance.now();
+  const result = handLandmarker.detectForVideo(video, nowMs);
+
+  if (result.landmarks && result.landmarks.length > 0) {
+    const toPixel = (lm) => [Math.round((1 - lm.x) * w), Math.round(lm.y * h)];
+    const allFingertips = [];
+    result.landmarks.forEach((lm) => {
+      FINGERTIP_IDS.forEach((idx) => {
+        allFingertips.push(toPixel(lm[idx]));
+      });
+    });
+    drawHologramMesh(allFingertips);
+  }
+
+  requestAnimationFrame(renderLoop);
+}
+
+// ---------------------------------------------------------------------------
+// QUAY VIDEO & CHIA SẺ (hoàn toàn do người dùng chủ động bấm, không tự động)
+// ---------------------------------------------------------------------------
+let mediaRecorder = null;
+let recordedChunks = [];
+let isRecording = false;
+
+function pickSupportedMimeType() {
+  const candidates = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm", "video/mp4"];
+  for (const type of candidates) {
+    if (window.MediaRecorder && MediaRecorder.isTypeSupported(type)) return type;
+  }
+  return "";
+}
+
+function startRecording() {
+  if (!canvas.captureStream) {
+    recordStatus.textContent = "Trình duyệt này không hỗ trợ quay video từ canvas.";
+    return;
+  }
+  const stream = canvas.captureStream(30);
+  const mimeType = pickSupportedMimeType();
+  recordedChunks = [];
+  try {
+    mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+  } catch (err) {
+    console.error(err);
+    recordStatus.textContent = "Không thể khởi tạo bộ quay video trên trình duyệt này.";
+    return;
+  }
+  mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) recordedChunks.push(e.data); };
+  mediaRecorder.onstop = handleRecordingStop;
+  mediaRecorder.start();
+  isRecording = true;
+  recordBtn.textContent = "⏹ Dừng quay";
+  recordStatus.textContent = "Đang quay...";
+  mobileRecordBtn.textContent = "⏹";
+  mobileRecordBtn.classList.add("recording");
+}
+
+function stopRecording() {
+  if (mediaRecorder && mediaRecorder.state !== "inactive") mediaRecorder.stop();
+  isRecording = false;
+  recordBtn.textContent = "⏺ Bắt đầu quay";
+  recordStatus.textContent = "";
+  mobileRecordBtn.textContent = "⏺";
+  mobileRecordBtn.classList.remove("recording");
+}
+
+function toggleRecording() {
+  if (!isRecording) startRecording();
+  else stopRecording();
+}
+
+function handleRecordingStop() {
+  const mimeType = mediaRecorder.mimeType || "video/webm";
+  const blob = new Blob(recordedChunks, { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const ext = mimeType.includes("mp4") ? "mp4" : "webm";
+  const filename = `retrolens-${Date.now()}.${ext}`;
+
+  previewVideo.src = url;
+  recordResult.classList.remove("hidden");
+  shareNote.textContent = "";
+
+  downloadBtn.onclick = () => {
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+  };
+
+  shareBtn.onclick = async () => {
+    const file = new File([blob], filename, { type: mimeType });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: "Video Retrolens", text: "Video mình vừa quay bằng Retrolens" });
+      } catch (err) {
+        console.log("Người dùng đã hủy chia sẻ hoặc có lỗi:", err);
+      }
+    } else {
+      shareNote.textContent =
+        "Trình duyệt này chưa hỗ trợ chia sẻ file trực tiếp. Video đã được tải về máy — " +
+        "hãy tự đính kèm file đó vào email/ứng dụng bạn muốn gửi.";
+      downloadBtn.click();
+    }
+  };
+}
+
+recordBtn.addEventListener("click", toggleRecording);
+mobileRecordBtn.addEventListener("click", async () => {
+  if (isRecording) {
+    stopRecording();
+    setTimeout(() => shareBtn.onclick && shareBtn.onclick(), 300);
+  } else {
+    startRecording();
+  }
+});
+</script>
+</body>
+</html>
